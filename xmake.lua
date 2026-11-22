@@ -5,7 +5,7 @@ includes(os.getenv("CommonLibSSE-NG"))
 
 set_project("SeamlessSaving")
 set_version("1.0.6")
-set_license("GPL-3.0")
+set_license("MIT")
 
 set_languages("c++23")
 set_warnings("allextra")
