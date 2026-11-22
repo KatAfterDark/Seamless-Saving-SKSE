@@ -1,6 +1,5 @@
 #include "SaveOptimization.h"
 
-#include "../../RE/WritableStringArray.h"
 #include "../../RE/WriteBuffer.h"
 
 #include <MinHook.h>
@@ -15,9 +14,9 @@ static RE::SaveStorageWrapper* Ctor(void* svWrapperSpace, RE::Win32FileType* fil
     static REL::Relocation<void(*)(void* thiz, RE::Win32FileType* file)>Ctor{ RELOCATION_ID(35172, 36062) };
     Ctor(svWrapperSpace, fileStream);
     RE::SaveStorageWrapper* svWrapper = (RE::SaveStorageWrapper*)svWrapperSpace;
-    RE::MemoryManager::GetSingleton()->GetThreadScrapHeap()->Deallocate(((RE::WriteBuffer*)svWrapper->unk10)->startPtr);
+    RE::MemoryManager::GetSingleton()->GetThreadScrapHeap()->Deallocate(((RE::WriteBuffer*)svWrapper->buffer)->startPtr);
 
-    auto&& writebuf = ((RE::WriteBuffer*)svWrapper->unk10);
+    auto&& writebuf = ((RE::WriteBuffer*)svWrapper->buffer);
 
 	void* rawMem = malloc(size);
     if(!rawMem) {
@@ -29,14 +28,14 @@ static RE::SaveStorageWrapper* Ctor(void* svWrapperSpace, RE::Win32FileType* fil
     writebuf->startPtr = rawMem;
     writebuf->size = size;
     writebuf->curPtr = writebuf->startPtr;
-    svWrapper->unk18 = 1; //bWriteToBuffer
+    svWrapper->bWriteToBuffer = true;
 
     return svWrapper;
 }
 
 //MUST SAVE STARTPTR AND FREE THEN ELSEWHERE
 static void Dtor(RE::SaveStorageWrapper* svWrapper) {
-    auto&& writebuf = ((RE::WriteBuffer*)svWrapper->unk10);
+    auto&& writebuf = ((RE::WriteBuffer*)svWrapper->buffer);
     writebuf->startPtr = nullptr;
     writebuf->size = 0;
     writebuf->curPtr = nullptr;
@@ -133,7 +132,7 @@ void SaveOptimization::SaveVM(void* thiz, RE::SaveStorageWrapper* save, RE::Skyr
   //      free(ptr);
   //  }
 
-    save->unk18 = 0; //bWriteToBuffer
+    save->bWriteToBuffer = false;
     save->Write(2, (std::byte*)writebuf.startPtr); //Version NUM
 
     //Saving Stringtable
@@ -146,7 +145,7 @@ void SaveOptimization::SaveVM(void* thiz, RE::SaveStorageWrapper* save, RE::Skyr
     }
     //Rest of Data
     save->Write((uint64_t)writebuf.curPtr - (uint64_t)writebuf.startPtr - 2, (std::byte*)writebuf.startPtr + 2);
-    save->unk18 = 1;
+    save->bWriteToBuffer = true;
 
     free(writebuf.startPtr);
     return;
@@ -164,7 +163,7 @@ void SaveOptimization::SaveGame(RE::BGSSaveLoadGame* thiz, RE::Win32FileType* fi
         char svWrapperSpace[0x38]{};
         char fileStrSpace[0xBE8]{};
         RE::SaveStorageWrapper* svWrapper = Ctor(&svWrapperSpace, (RE::Win32FileType*)&fileStrSpace, 64 * 1024 * 1024);
-		auto&& writebuf = ((RE::WriteBuffer*)svWrapper->unk10);
+		auto&& writebuf = ((RE::WriteBuffer*)svWrapper->buffer);
 
         auto writer = RE::VTABLE_SkyrimScript__SaveFileHandleReaderWriter[0].address();
 
@@ -186,7 +185,7 @@ void SaveOptimization::SaveGame(RE::BGSSaveLoadGame* thiz, RE::Win32FileType* fi
 RE::BSStorageDefs::ErrorCode SaveOptimization::EnsureCapacity(RE::SaveStorageWrapper* thiz, unsigned __int64 size) {
     if(GetCurrentThreadId() != vmSaveThreadID) return _EnsureCapacity(thiz, size);
     
-    auto&& writebuf = ((RE::WriteBuffer*)thiz->unk10);
+    auto&& writebuf = ((RE::WriteBuffer*)thiz->buffer);
     size_t used = (uint64_t)writebuf->curPtr - (uint64_t)writebuf->startPtr;
     size_t available = writebuf->size - used;
 
@@ -234,7 +233,7 @@ void SaveOptimization::UnloadStringTable(RE::BSScript::ReadableStringTable* thiz
 }
 
 void SaveOptimization::ResetState(RE::BSScript::Internal::VirtualMachine* thiz) {
-	thiz->unk94D0 = thiz->arrays.size(); //arrayCount
+	thiz->arrayCount = thiz->arrays.size();
 
     if (!thiz->writeableTypeTable) {
         auto&& scrapheap = RE::MemoryManager::GetSingleton()->GetThreadScrapHeap();
@@ -249,7 +248,7 @@ void SaveOptimization::ResetState(RE::BSScript::Internal::VirtualMachine* thiz) 
     auto&& typeTable = (RE::BSTScrapHashMap<RE::BSFixedString, RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo>>*)thiz->writeableTypeTable;
 	typeTable->clear();
 	typeTable->reserve(thiz->objectTypeMap.size());
-    thiz->unk94CC = 0; //scriptCount
+    thiz->scriptCount = 0;
     for (auto&& obj : thiz->attachedScripts) {
         for (auto&& script : obj.second) {
             auto typeInfo = script->type;
@@ -258,7 +257,7 @@ void SaveOptimization::ResetState(RE::BSScript::Internal::VirtualMachine* thiz) 
 				if (ins.second == false) break;
                 typeInfo = typeInfo->parentTypeInfo;
             }
-			thiz->unk94CC++; //scriptCount
+			thiz->scriptCount++;
         }
     }
     for (auto&& obj : thiz->objectsAwaitingCleanup) {
